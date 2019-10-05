@@ -1,10 +1,11 @@
 import socket
+import sys
 from array import *          
 
 s = socket.socket()      
 # print("Socket successfully created")
 
-port = 12456
+port = int(sys.argv[1])
 
 s.bind(('', port))       
 # print("socket binded to %s" %(port))

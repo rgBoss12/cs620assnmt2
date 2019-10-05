@@ -1,4 +1,5 @@
-import socket 
+import socket
+import sys
 from _thread import *
 import threading
 import os
@@ -46,7 +47,7 @@ def threaded(c):
 				child = 0
 				if not os.fork():
 					child = os.getpid()
-					grandchild_to_send(sock)
+					child_to_send(sock, data.decode('ascii')+"f")
 					os._exit(0)
 				else:
 					children.append(child)
@@ -81,19 +82,10 @@ def chunks(l, k):
 	for i in range(0, len(l)-1, k):
 		yield(l[i:i+k])
 
-def grandchild_to_send(sock):
-	global listening_port
-	
-	## start recieving from new made connection
-	thread1 = threading.Thread(target=threaded, args=(sock,))
-	thread1.start()
-	
-
-	dateTimeObj = datetime.now()
-	timestampStr = dateTimeObj.strftime("%d-%b-%Y (%H:%M:%S.%f)")
-	message = ""+timestampStr+":"+sock.getsockname()[0]+":message"
-	
-	## send generated message
+def child_to_send(sock, message):
+	## send generated/received message
+	# thread1 = threading.Thread(target=threaded, args=(sock,))
+	# thread1.start()
 	sock.send(message.encode('ascii'))
 	
 
@@ -102,8 +94,8 @@ def Main():
 	global listening_port
 
 	## connects to the seed
-	seed_ip = '127.0.0.1'
-	seed_port = 12456
+	seed_ip = sys.argv[1]
+	seed_port = int(sys.argv[2])
 
 	seed_s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 	seed_s.connect((seed_ip, seed_port))
@@ -121,6 +113,8 @@ def Main():
 	node_array = list(chunks((node_list.split(':')), 2))
 	f = open("outputfile.txt", "a")
 	print(str(node_array))
+	f.write(str(node_array))
+	f.close()
 	
 	## pick your neighbours
 	neighbours = random.choices(node_array, k=random.choice(list(range(1,min(5, len(node_array)+1))) if len(node_array)>0 else [0]))
@@ -138,17 +132,24 @@ def Main():
 		port = int(node[1])
 		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		s.connect((host, port))
+		recieve_data = threading.Thread(target=threaded, args=(s,))
+		recieve_data.start()
 		socks.append(s)
 
 	children = []
 
 	## generate messages once every 5
 	for i in range(10):
+		# print(socks)
 		for sock in socks:
+			
+			dateTimeObj = datetime.now()
+			timestampStr = dateTimeObj.strftime("%d-%b-%Y (%H:%M:%S.%f)")
+			message = ""+timestampStr+":"+str(listening_port)+":message"
 			child = 0
 			if not os.fork():
 				child = os.getpid()
-				grandchild_to_send(sock)
+				child_to_send(sock, message)
 				os._exit(0)
 			else:
 				children.append(child)
