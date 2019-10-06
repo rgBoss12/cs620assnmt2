@@ -61,6 +61,7 @@ def listen_th():
 	host = ""
 	port = listening_port
 	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 	s.bind((host, port))
 	s.listen(5)
 	while True:
@@ -98,6 +99,7 @@ def Main():
 	seed_port = int(sys.argv[2])
 
 	seed_s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	seed_s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 	seed_s.connect((seed_ip, seed_port))
 
 	listening_port = seed_s.getsockname()[1]
