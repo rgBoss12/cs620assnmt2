@@ -15,6 +15,7 @@ stop_seeds = 0
 
 def seed_receive_thread(c):
 	global all_clients
+	global seed_sockets
 	global local_clients
 	global stop_seeds
 
@@ -41,16 +42,26 @@ def seed_receive_thread(c):
 		
 		if check_client ==0:
 			all_clients.append(new_client)
-			thread = threading.Thread(target=threaded_client, args=(new_client,))
-			thread.start()
+			for sock in seed_sockets:
+				sock.send(new_client.encode('ascii'))
 
-def threaded_client(addr):
+def threaded_client(c, addr):
 	global seed_sockets
+	global local_clients
+	global all_clients
+	
+	local_clients.append(c)
 	client_addr = addr[0] + str(addr[1])
 	for sock in seed_sockets:
 		sock.send(client_addr.encode('ascii'))
 	for client in local_clients:
-		client.send(client_addr.encode('ascii'))
+		if c!=client:
+			client.send(client_addr.encode('ascii'))
+	message = ''
+	for i in all_clients:
+		for j in i:
+			message = message + j + ':'
+	c.send(message.encode('ascii'))
 
 def listen_client_thread():
 	global listening_port
@@ -69,11 +80,11 @@ def listen_client_thread():
 		c, addr = s.accept()
 		
 		#TODO add locks
-		local_clients.append(c)
+		
 		all_clients.append([addr[0], str(addr[1])])
 		
 		## Send update to all seeds
-		thread = threading.Thread(target=threaded_client, args=(addr,))
+		thread = threading.Thread(target=threaded_client, args=(c, addr,))
 		thread.start()
 		# if time.time() > timeout:
 		# 	break
