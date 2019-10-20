@@ -27,7 +27,7 @@ message_list = []
 mining_lock = threading._RLock()
 mining_to_start = False
 time_lock = threading._RLock()
-waitingTime = 0
+# waitingTime = 0.0
 header_list_lock = threading._RLock()
 block_header_list = []
 received_lock = threading._RLock()
@@ -44,17 +44,11 @@ def threaded(c):
     global mining_to_start
     global total_clients
 
-    while mining_to_start==0:
-        print("receiving from - "+ str(c.getpeername()))
+    while mining_to_start==False:
         try:
             data = c.recv(1024)
         except socket.error:
-            # err = e.args[0]
-            # if err==errno.EAGAIN or err == errno.EWOULDBLOCK:
             continue
-            # else:
-            #     print(e)
-            #     sys.exit(1)
         else:
             print("message - " + data.decode('ascii') + str(c.getpeername()) +" received")
             msg = data.decode('ascii').split(':')
@@ -74,15 +68,15 @@ def threaded(c):
                 child = 0
                 if not os.fork():
                     child = os.getpid()
-                    child_to_send(sock, msg[0])
+                    child_to_send(sock, data.decode('ascii'))
                     os._exit(0)
                 else:
                     children.append(child)
                     continue
 
-def threaded_afterstartmine(c):
+def threaded_afterstartmine(c, waitingTime):
     global received_block
-    global waitingTime
+    # global waitingTime
     global last_block_hash
     global block_header_list
 
@@ -90,20 +84,24 @@ def threaded_afterstartmine(c):
     print(waitingTime)
     # global mining_to_start
     t_now = time.time()
-    while (time.time()-t_now) < waitingTime:
+    while True:
+        if ((time.time()-t_now) > waitingTime):
+            break
+        # print(waitingTime)
         try:
             data = c.recv(1024)
         except socket.error:
             continue
         else:
+            
             recvv_data = data.decode('ascii')
-            print("data received - " + recvv_data)
+            # print("data received - " + recvv_data)
             recvv_list = recvv_data.split(':')
             if(len(recvv_list) != 3):
-                print("the fuck")
+                # print("the fuck")
                 continue
             blockhash = recvv_list[0]
-            print("previous block hash in recevied block is " + blockhash)
+            # print("previous block hash in recevied block is " + blockhash)
             merkelroot = recvv_list[1]
             timestamp_ = float(recvv_list[2])
             blockrecv = BlockHeader(blockhash, timestamp_)
@@ -121,7 +119,7 @@ def threaded_afterstartmine(c):
             valid_timestamp = 0
 
             for block in block_header_list:
-                print('checking previous block hash')
+                # print('checking previous block hash')
                 data = block.encode()
                 hash_object = hashlib.sha3_512(data)
                 hex_dig = hash_object.hexdigest()[-4:]
@@ -133,7 +131,7 @@ def threaded_afterstartmine(c):
 
             # if(len(block_header_list) == 0):
             if(blockhash == genesis_block):
-                print("satisfying hash")
+                # print("satisfying hash")
                 present_prevhash = 1
                 if time_diff_in_sec < 3600 or time_diff_in_sec > -3600:
                     valid_timestamp = 1
@@ -160,7 +158,7 @@ def threaded_afterstartmine(c):
                             continue
                 ## if last block reset timer
                 if blockhash == last_block_hash:
-                    print("longest chain forming, breaking from receiving")
+                    # print("longest chain forming, breaking from receiving")
                     data1= blockrecv.encode()
                     hash_object = hashlib.sha3_512(data1) #TODO change it to SHA3
                     last_hash_lock.acquire()
@@ -189,6 +187,7 @@ def listen_th(listening_port):
         ## accept incoming connections
         c, addr = s.accept()
         print("Connection from client at " + str(addr) + " accepted")
+        c.setblocking(0)
         lock.acquire()
         socks.append(c)
         lock.release()
@@ -216,7 +215,7 @@ def Main():
     global listening_port
     global mining_to_start
     global total_clients
-    global waitingTime
+    # global waitingTime
     global received_block
     global last_block_hash
 
@@ -296,21 +295,22 @@ def Main():
     nodeHashPower = 1/total_clients
     globalLambda = 1.0/interarrivaltime
     lambda_t = (nodeHashPower * globalLambda)/100.0
-    time_lock.acquire()
-    waitingTime = np.exp(np.random.uniform(0,1))/lambda_t
-    time_lock.release()
-    print("waiting time - " + str(waitingTime))
+    
     # print("what the ")
 
     # print(socks)
 
     while True:
+        # time_lock.acquire()
+        waitingTime = np.exp(np.random.uniform(0,1))/lambda_t
+        # time_lock.release()
+        print("waiting time - " + str(waitingTime))
         thread_list = []
         received_lock.acquire()
         received_block = 0  
         received_lock.release()
         for sock in socks:
-            recieve_data_after_start_mine = threading.Thread(target=threaded_afterstartmine, args=(sock,))
+            recieve_data_after_start_mine = threading.Thread(target=threaded_afterstartmine, args=(sock, waitingTime,))
             recieve_data_after_start_mine.start()
             thread_list.append(recieve_data_after_start_mine)
         
