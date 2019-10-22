@@ -39,6 +39,14 @@ total_clients = 0
 total_cl_lock = threading._RLock()
 longest_chain_length = 1
 chain_length_lock = threading._RLock()
+private_block_header_list = []  #####
+private_block_list_lock = threading._RLock()
+privateBranchLen = 0 #####
+privateBranchLen_lock = threading._RLock()
+deltaPrivate = 0 #####
+deltaPrivate_lock = threading._RLock()
+unpublish_index = 0
+index_lock = threading._RLock()
 
 ## used for recieving from each connection -- implemented gossip protocol - on recieving message, check in ML and forward to neighbours(except from where recieived) only if not present
 def threaded(c):
@@ -56,7 +64,7 @@ def threaded(c):
             if msg[0] == "start mine":
                 print("start mining now")
                 total_cl_lock.acquire()
-                total_clients = int(msg[1]) + 1
+                total_clients = int(msg[1])
                 total_cl_lock.release()
                 mining_lock.acquire()
                 mining_to_start = True
@@ -80,6 +88,10 @@ def threaded_afterstartmine(c, waitingTime):
     global last_block_hash
     global block_header_list
     global longest_chain_length
+    global private_block_header_list
+    global deltaPrivate
+    global privateBranchLen
+    global unpublish_index
 
     print("receiving from "+ str(c.getpeername()) + " during mining")
     # print(waitingTime)
@@ -174,6 +186,55 @@ def threaded_afterstartmine(c, waitingTime):
                     chain_length_lock.acquire()
                     longest_chain_length = recv_chain_length
                     chain_length_lock.release()
+
+                    deltaPrivate_lock.acquire()
+                    deltaPrivate_lock = len(private_block_header_list) - len(block_header_list)
+                    deltaPrivate_lock.release()
+
+                    if deltaPrivate == 0:
+                        private_block_list_lock.acquire()
+                        private_block_header_list = block_header_list
+                        private_block_list_lock.release()
+                        privateBranchLen_lock.acquire()
+                        privateBranchLen = 0
+                        privateBranchLen_lock.release()
+                    elif deltaPrivate == 1:
+                        data_to_send = private_block_header_list[-1].preparetosend()
+                        for sock in socks:
+                            child = 0
+                            if not os.fork():
+                                child = os.getpid()
+                                child_to_send(sock, data_to_send.decode('ascii'))
+                            else:
+                                continue
+                    elif deltaPrivate == 2:
+                        for block in private_block_header_list:
+                            data_to_send = block.preparetosend()
+                            for sock in socks:
+                                child = 0
+                                if not os.fork():
+                                    child = os.getpid()
+                                    child_to_send(sock, data_to_send.decode('ascii'))
+                                else:
+                                    continue
+                        index_lock.acquire()
+                        unpublish_index = 0
+                        index_lock.release()
+                        privateBranchLen_lock.acquire()
+                        privateBranchLen = 0
+                        privateBranchLen_lock.release()
+                    else:
+                        data_to_send = private_block_header_list[unpublish_index].preparetosend()
+                        for sock in socks:
+                            child = 0
+                            if not os.fork():
+                                child = os.getpid()
+                                child_to_send(sock, data_to_send.decode('ascii'))
+                            else:
+                                continue
+                        index_lock.acquire()
+                        unpublish_index += 1
+                        index_lock.release()
                     break              
         
     
@@ -219,6 +280,10 @@ def Main():
     global received_block
     global last_block_hash
     global longest_chain_length
+    global deltaPrivate
+    global privateBranchLen
+    global private_block_header_list
+    global unpublish_index
 
     seed_ip = sys.argv[1]
     seed_port = int(sys.argv[2])
@@ -264,22 +329,24 @@ def Main():
         socks.append(s)
         lock.release()
 
-    if client_last==1:
-        mining_lock.acquire()
-        mining_to_start = True
-        mining_lock.release()
-        total_cl_lock.acquire()
-        total_clients = len(node_array) + 1
-        total_cl_lock.release()
-        print("send message to start mining")
-        for sock in socks:
-            child = 0
-            if not os.fork():
-                child = os.getpid()
-                child_to_send(sock, "start mine:" + str(len(node_array)))
-                os._exit(0)
-            else:
-                continue
+    nodeHashPower = 0.5
+
+    ## attacker is last to connect to the network. mining starts immediately
+    mining_lock.acquire()
+    mining_to_start = True
+    mining_lock.release()
+    total_cl_lock.acquire()
+    total_clients = len(node_array) + 1
+    total_cl_lock.release()
+    print("send message to start mining")
+    for sock in socks:
+        child = 0
+        if not os.fork():
+            child = os.getpid()
+            child_to_send(sock, "start mine:" + str(total_clients/(1-nodeHashPower))
+            os._exit(0)
+        else:
+            continue
 
     ## will be stuck here until either it's last client or'start mine' message is received
     while(True):
@@ -290,7 +357,7 @@ def Main():
 
     ## Block Mining
     interarrivaltime = 0.03
-    nodeHashPower = 1/total_clients ## uniform hashing power
+    # nodeHashPower = 1/total_clients ## uniform hashing power
     globalLambda = 1.0/interarrivaltime
     lambda_t = (nodeHashPower * globalLambda)/100.0
 
@@ -323,35 +390,53 @@ def Main():
             timenow = datetime.timestamp(datetime.now())
             blockgen = BlockHeader(last_block_hash, timenow, longest_chain_length+1)
 
+            deltaPrivate = len(private_block_header_list) - len(block_header_list)
+
             header_list_lock.acquire()
-            block_header_list.append(blockgen)
+            private_block_header_list.append(blockgen)
             header_list_lock.release()
 
             blockchain = ''
-            for block in block_header_list:
+            for block in private_block_header_list:
                 blockchain += block.blockhash + ' <- '
             print(blockchain)
 
-            data1 = blockgen.encode()
-            hash_object = hashlib.sha3_512(data1)
+            privateBranchLen += 1
 
-            last_hash_lock.acquire()
-            last_block_hash = hash_object.hexdigest()[-4:]
-            last_hash_lock.release()
+            if (deltaPrivate == 0) and (privateBranchLen == 2):
+                for block in private_block_header_list:
+                    data_to_send = block.preparetosend()
+                    for sock in socks:
+                        child = 0
+                        if not os.fork():
+                            child = os.getpid()
+                            child_to_send(sock, data_to_send.decode('ascii'))
+                        else:
+                            continue
+                index_lock.acquire()
+                unpublish_index = 0
+                index_lock.release()
 
-            chain_length_lock.acquire()
-            longest_chain_length +=1
-            chain_length_lock.release()
+            # data1 = blockgen.encode()
+            # hash_object = hashlib.sha3_512(data1)
 
-            data_to_send = blockgen.preparetosend()
-            for sock in socks:
-                child = 0
-                if not os.fork():
-                    child = os.getpid()
-                    child_to_send(sock, data_to_send.decode('ascii'))
-                    os._exit(0)
-                else:
-                    continue
+            # last_hash_lock.acquire()
+            # last_block_hash = hash_object.hexdigest()[-4:]
+            # last_hash_lock.release()
+
+            # chain_length_lock.acquire()
+            # longest_chain_length +=1
+            # chain_length_lock.release()
+
+            # data_to_send = blockgen.preparetosend()
+            # for sock in socks:
+            #     child = 0
+            #     if not os.fork():
+            #         child = os.getpid()
+            #         child_to_send(sock, data_to_send.decode('ascii'))
+            #         os._exit(0)
+            #     else:
+            #         continue
     
 if __name__ == '__main__': 
     Main()
